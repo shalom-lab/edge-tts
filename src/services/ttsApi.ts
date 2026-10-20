@@ -1,5 +1,8 @@
 import { VoiceItem, ProsodyConfig } from '../types';
 
+/** API origin for Pages builds; empty = same-origin (local `tsx server.ts`). Strip trailing slash. */
+const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+
 export interface SynthesisResponse {
   blob: Blob;
   blobUrl: string;
@@ -9,7 +12,7 @@ export interface SynthesisResponse {
 }
 
 export async function fetchVoicesApi(): Promise<VoiceItem[]> {
-  const res = await fetch('/api/voices');
+  const res = await fetch(`${API_BASE}/api/voices`);
   if (!res.ok) {
     throw new Error(`获取音色列表失败: ${res.statusText}`);
   }
@@ -36,7 +39,7 @@ export async function synthesizeAudioApi(
     rawSSML: rawSSML?.trim() ? rawSSML.trim() : undefined,
   };
 
-  const response = await fetch('/api/synthesize', {
+  const response = await fetch(`${API_BASE}/api/synthesize`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
