@@ -1,18 +1,34 @@
 import { getCuratedVoices } from './voices';
 import { synthesize } from './synthesize';
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Expose-Headers':
-    'X-Synthesis-Duration-Ms, X-Audio-Bytes, Content-Disposition, Content-Type',
-  'Access-Control-Max-Age': '86400',
-};
+const ALLOWED_ORIGIN_EXACT = new Set(['https://shalom-lab.github.io']);
 
-function withCors(response: Response): Response {
+function isAllowedOrigin(origin: string | null): boolean {
+  if (!origin) return false;
+  if (ALLOWED_ORIGIN_EXACT.has(origin)) return true;
+  if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  if (/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return true;
+  return false;
+}
+
+function corsHeadersFor(origin: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Expose-Headers':
+      'X-Synthesis-Duration-Ms, X-Audio-Bytes, Content-Disposition, Content-Type',
+    'Access-Control-Max-Age': '86400',
+  };
+  if (origin && isAllowedOrigin(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers['Vary'] = 'Origin';
+  }
+  return headers;
+}
+
+function withCors(response: Response, origin: string | null): Response {
   const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+  for (const [k, v] of Object.entries(corsHeadersFor(origin))) {
     headers.set(k, v);
   }
   return new Response(response.body, {
@@ -22,42 +38,57 @@ function withCors(response: Response): Response {
   });
 }
 
-function json(data: unknown, status = 200): Response {
+function json(data: unknown, status = 200, origin: string | null = null): Response {
   return withCors(
     new Response(JSON.stringify(data), {
       status,
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    })
+    }),
+    origin
   );
 }
 
-function isAllowedOrigin(origin: string | null): boolean {
-  if (!origin) return true;
-  if (origin === 'https://shalom-lab.github.io') return true;
-  if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
-  if (/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return true;
-  // Free public API — allow other origins too (Access-Control-Allow-Origin: *)
-  return true;
+function clientKey(request: Request): string {
+  return (
+    request.headers.get('cf-connecting-ip') ||
+    request.headers.get('CF-Connecting-IP') ||
+    'unknown'
+  );
 }
 
-async function handleVoices(): Promise<Response> {
+async function handleVoices(origin: string | null): Promise<Response> {
   try {
     const voices = getCuratedVoices();
-    return json({ success: true, count: voices.length, voices });
+    return json({ success: true, count: voices.length, voices }, 200, origin);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return json({ success: false, error: msg }, 500);
+    return json({ success: false, error: msg }, 500, origin);
   }
 }
 
-async function handleSynthesize(request: Request): Promise<Response> {
+async function handleSynthesize(
+  request: Request,
+  env: Env,
+  origin: string | null
+): Promise<Response> {
   const start = Date.now();
   try {
+    const { success } = await env.SYNTH_RATE_LIMITER.limit({
+      key: `synth:${clientKey(request)}`,
+    });
+    if (!success) {
+      return json(
+        { success: false, error: '请求过于频繁，请稍后再试（约每分钟 20 次）' },
+        429,
+        origin
+      );
+    }
+
     const body = (await request.json()) as Record<string, unknown>;
     const text = typeof body.text === 'string' ? body.text : undefined;
     const rawSSML = typeof body.rawSSML === 'string' ? body.rawSSML : undefined;
     if (!text?.trim() && !(rawSSML && rawSSML.trim().startsWith('<speak'))) {
-      return json({ success: false, error: '缺少合成文本内容 (text)' }, 400);
+      return json({ success: false, error: '缺少合成文本内容 (text)' }, 400, origin);
     }
 
     const result = await synthesize({
@@ -86,38 +117,53 @@ async function handleSynthesize(request: Request): Promise<Response> {
           'Content-Disposition': `inline; filename="edge_tts_${voice}_${Date.now()}.${ext}"`,
           'Cache-Control': 'public, max-age=3600',
         },
-      })
+      }),
+      origin
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('synthesize error:', msg);
-    return json({ success: false, error: '语音合成失败: ' + msg }, 500);
+    return json({ success: false, error: '语音合成失败: ' + msg }, 500, origin);
   }
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
+    const origin = request.headers.get('Origin');
 
     if (request.method === 'OPTIONS') {
-      const origin = request.headers.get('Origin');
       if (!isAllowedOrigin(origin)) {
         return new Response(null, { status: 403 });
       }
-      return withCors(new Response(null, { status: 204 }));
+      return withCors(new Response(null, { status: 204 }), origin);
     }
 
     if (path === '/health' && request.method === 'GET') {
-      return json({ ok: true, service: 'edge-tts-api' });
+      // Ops probe — no origin gate
+      return json({ ok: true, service: 'edge-tts-api' }, 200, origin);
+    }
+
+    const needsOrigin =
+      path === '/api/voices' || path === '/api/synthesize';
+    if (needsOrigin && !isAllowedOrigin(origin)) {
+      return json(
+        {
+          success: false,
+          error: '禁止的来源。仅允许 shalom-lab.github.io 与本地开发 Origin。',
+        },
+        403,
+        null
+      );
     }
 
     if (path === '/api/voices' && request.method === 'GET') {
-      return handleVoices();
+      return handleVoices(origin);
     }
 
     if (path === '/api/synthesize' && request.method === 'POST') {
-      return handleSynthesize(request);
+      return handleSynthesize(request, env, origin);
     }
 
     if (
@@ -125,9 +171,9 @@ export default {
       request.method !== 'GET' &&
       request.method !== 'POST'
     ) {
-      return json({ success: false, error: 'method not allowed' }, 405);
+      return json({ success: false, error: 'method not allowed' }, 405, origin);
     }
 
-    return json({ success: false, error: 'not found' }, 404);
+    return json({ success: false, error: 'not found' }, 404, origin);
   },
 };

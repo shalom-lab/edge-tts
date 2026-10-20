@@ -82,6 +82,12 @@ bun run worker:dev
 然后将 `VITE_API_BASE=http://127.0.0.1:8787` 用于前端，或直接 `curl` Worker 路由。
 
 > 本仓库 CI **不会**自动部署 Worker；登录与 `wrangler deploy` 由维护者在本地完成。Worker 内无密钥可提交。
+>
+> **滥用防护（已启用）**
+> - `POST /api/synthesize`：按客户端 IP 约 **20 次 / 60 秒**（Cloudflare Rate Limiting，按机房计数）
+> - `/api/voices` 与 `/api/synthesize`：仅允许 Origin `https://shalom-lab.github.io` 以及 `localhost` / `127.0.0.1`；无 Origin 或其它来源返回 403
+> - 免费套餐仍有约 **10 万请求/天** 上限；到顶后接口当天不可用，一般不产生额外扣费
+
 
 ## 脚本
 

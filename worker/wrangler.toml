@@ -2,4 +2,13 @@ name = "edge-tts-api"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 
-# Free plan: no paid bindings. WebSocket upgrade via fetch() needs no extra flags.
+# Free plan: Rate Limiting binding (no separate charge).
+# WebSocket upgrade via fetch() needs no extra flags.
+
+[[ratelimits]]
+name = "SYNTH_RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 20
+  period = 60
