@@ -21,7 +21,7 @@ interface SingleVoiceTesterProps {
   selectedVoice: VoiceItem | null;
   onOpenVoiceModal: () => void;
   onSelectVoice: (shortName: string) => void;
-  onAddHistory: (item: SynthHistoryItem) => void;
+  onAddHistory: (item: SynthHistoryItem, audioBlob: Blob) => void;
 }
 
 export const SingleVoiceTester: React.FC<SingleVoiceTesterProps> = ({
@@ -120,17 +120,20 @@ export const SingleVoiceTester: React.FC<SingleVoiceTesterProps> = ({
       });
 
       // Save to history
-      onAddHistory({
-        id: 'hist_' + Date.now(),
-        text: isCustomSsml ? customSsmlText : text,
-        voice: currentVoiceName,
-        voiceLabel: selectedVoice?.label || currentVoiceName,
-        config: { ...config },
-        audioBlobUrl: result.blobUrl,
-        fileSize: result.bytes,
-        durationMs: result.durationMs,
-        timestamp: Date.now(),
-      });
+      onAddHistory(
+        {
+          id: 'hist_' + Date.now(),
+          text: isCustomSsml ? customSsmlText : text,
+          voice: currentVoiceName,
+          voiceLabel: selectedVoice?.label || currentVoiceName,
+          config: { ...config },
+          audioBlobUrl: result.blobUrl,
+          fileSize: result.bytes,
+          durationMs: result.durationMs,
+          timestamp: Date.now(),
+        },
+        result.blob
+      );
     } catch (err: unknown) {
       console.error('Synthesis error:', err);
       const msg = err instanceof Error ? err.message : String(err);

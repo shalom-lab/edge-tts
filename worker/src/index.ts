@@ -107,7 +107,7 @@ async function handleSynthesize(
     const ext = result.format.includes('webm') ? 'webm' : 'mp3';
 
     return withCors(
-      new Response(result.audio, {
+      new Response(result.audio.buffer.slice(result.audio.byteOffset, result.audio.byteOffset + result.audio.byteLength), {
         status: 200,
         headers: {
           'Content-Type': result.contentType,

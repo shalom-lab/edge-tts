@@ -8,6 +8,7 @@ import { VoiceSelectorModal } from './components/VoiceSelectorModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { VoiceItem, SynthHistoryItem } from './types';
 import { fetchVoicesApi, synthesizeAudioApi } from './services/ttsApi';
+import { clearHistory, loadHistory, saveHistoryItem } from './services/historyDb';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 export default function App() {
@@ -20,7 +21,7 @@ export default function App() {
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
-  // Favorites stored in localStorage
+  // Favorites stored in localStorage (small string list)
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('edge_tts_favorites');
@@ -30,7 +31,7 @@ export default function App() {
     }
   });
 
-  // History list
+  // History list (IndexedDB + in-memory blob URLs)
   const [history, setHistory] = useState<SynthHistoryItem[]>([]);
 
   // Quick audition preview audio
@@ -55,6 +56,21 @@ export default function App() {
     loadVoices();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const items = await loadHistory();
+        if (!cancelled) setHistory(items);
+      } catch (e) {
+        console.error('Failed to load history from IndexedDB:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleToggleFavorite = (shortName: string) => {
     setFavorites((prev) => {
       const next = prev.includes(shortName)
@@ -69,12 +85,35 @@ export default function App() {
     });
   };
 
-  const handleAddHistory = (item: SynthHistoryItem) => {
-    setHistory((prev) => [item, ...prev].slice(0, 30));
+  const handleAddHistory = (item: SynthHistoryItem, audioBlob: Blob) => {
+    setHistory((prev) => {
+      // Revoke blob URL of any row we drop past the cap
+      const next = [item, ...prev];
+      const kept = next.slice(0, 30);
+      for (const dropped of next.slice(30)) {
+        try {
+          URL.revokeObjectURL(dropped.audioBlobUrl);
+        } catch {
+          /* ignore */
+        }
+      }
+      return kept;
+    });
+    void saveHistoryItem(item, audioBlob).catch((e) =>
+      console.error('Failed to persist history:', e)
+    );
   };
 
   const handleClearHistory = () => {
+    for (const item of history) {
+      try {
+        URL.revokeObjectURL(item.audioBlobUrl);
+      } catch {
+        /* ignore */
+      }
+    }
     setHistory([]);
+    void clearHistory().catch((e) => console.error('Failed to clear IndexedDB history:', e));
   };
 
   // Quick audition player for previewing voices in modal / catalog
@@ -141,11 +180,9 @@ export default function App() {
         {isLoadingVoices && voices.length === 0 && (
           <div className="py-24 text-center">
             <div className="w-10 h-10 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
-            <h3 className="text-base font-semibold text-slate-800">
-              正在连接微软 Edge 神经网络语音服务...
-            </h3>
+            <h3 className="text-base font-semibold text-slate-800">正在加载精选音色…</h3>
             <p className="text-xs text-slate-600 mt-1">
-              获取全球 300+ 免费超自然高保真音色列表中
+              列表来自本站精选目录；合成走 Cloudflare Worker
             </p>
           </div>
         )}
