@@ -78,7 +78,7 @@ async function handleSynthesize(
     });
     if (!success) {
       return json(
-        { success: false, error: '请求过于频繁，请稍后再试（约每分钟 20 次）' },
+        { success: false, error: '请求过于频繁，请稍后再试（约每分钟 50 次）' },
         429,
         origin
       );

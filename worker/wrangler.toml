@@ -10,5 +10,5 @@ name = "SYNTH_RATE_LIMITER"
 namespace_id = "1001"
 
   [ratelimits.simple]
-  limit = 20
+  limit = 50
   period = 60

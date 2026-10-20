@@ -103,7 +103,7 @@ bun run worker:dev
 > 本仓库 CI **不会**自动部署 Worker；登录与 `wrangler deploy` 由维护者在本地完成。Worker 内无密钥可提交。
 >
 > **滥用防护（已启用）**
-> - `POST /api/synthesize`：按客户端 IP 约 **20 次 / 60 秒**（Cloudflare Rate Limiting，按机房计数）
+> - `POST /api/synthesize`：按客户端 IP 约 **50 次 / 60 秒**（Cloudflare Rate Limiting，按机房计数）
 > - `/api/voices` 与 `/api/synthesize`：仅允许本站 Origin `https://shalom-lab.github.io`（**不含** localhost）；其它站或无 Origin 返回 403
 > - 免费套餐仍有约 **10 万请求/天** 上限；到顶后接口当天不可用，一般不产生额外扣费
 
