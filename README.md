@@ -35,9 +35,27 @@ VITE_API_BASE=https://your-api.example.com bun run build
 
 参见 `.env.example`。仓库中请勿提交密钥。
 
+## Cloudflare Worker / Pages 是什么
+
+| 产品 | 类比 | 作用（本项目） |
+|------|------|----------------|
+| **GitHub Pages** | 静态网站托管 | 我们实际用的前端托管：`https://shalom-lab.github.io/edge-tts/` |
+| **Cloudflare Pages** | 也是静态站托管（类似 GitHub Pages） | **本仓库未使用**；概念上和 GitHub Pages 一类 |
+| **Cloudflare Workers** | **云函数 / Serverless**（不是常开的云服务器） | 请求到来才跑一小段 JS：把 `/api/voices`、`/api/synthesize` 转给微软 Edge TTS 再返回 |
+
+和买 VPS 的区别：VPS 是一台一直开着的机器；Worker 是按次执行、按请求计费/计额度，适合这种轻量 API。
+
+当前线上 Worker：`https://edge-tts-api.shalom-lab.workers.dev`  
+**访问限制**：`/api/voices` 与 `/api/synthesize` **只允许**浏览器 Origin 为：
+
+- `https://shalom-lab.github.io`（本站 Pages）
+- `http://localhost` / `http://127.0.0.1`（任意端口，本地调试）
+
+其它网站、无 Origin 的脚本直调会 **403**。`GET /health` 不做 Origin 校验（运维探测用）。
+
 ## Cloudflare Worker
 
-仓库内 `worker/` 是与前端契约一致的 TTS 后端，跑在 Cloudflare **免费套餐**上：
+仓库内 `worker/` 是与前端契约一致的 TTS 后端，跑在 Cloudflare **Workers 免费套餐**上：
 
 | 路由 | 说明 |
 |------|------|
@@ -85,7 +103,7 @@ bun run worker:dev
 >
 > **滥用防护（已启用）**
 > - `POST /api/synthesize`：按客户端 IP 约 **20 次 / 60 秒**（Cloudflare Rate Limiting，按机房计数）
-> - `/api/voices` 与 `/api/synthesize`：仅允许 Origin `https://shalom-lab.github.io` 以及 `localhost` / `127.0.0.1`；无 Origin 或其它来源返回 403
+> - `/api/voices` 与 `/api/synthesize`：仅允许本站 Origin `https://shalom-lab.github.io`（以及本地 `localhost` / `127.0.0.1`）；其它站或无 Origin 返回 403
 > - 免费套餐仍有约 **10 万请求/天** 上限；到顶后接口当天不可用，一般不产生额外扣费
 
 
