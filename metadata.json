@@ -1,0 +1,6 @@
+{
+  "name": "Edge TTS 音色测试实验室",
+  "description": "全面测试与试听微软 Edge TTS 神经网络超自然音色，支持多语种、多方言、多角色对比、语速音调音量精调及音频导出",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
