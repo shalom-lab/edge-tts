@@ -21,7 +21,9 @@ bun run dev
 
 CI 在构建时设置 `BASE_PATH=/edge-tts/`，使资源路径适配项目 Pages。
 
-### 重要：TTS API 需要 Node 后端
+音色列表由前端内置的精选目录（`src/data/voices.ts`）提供，因此 Pages **无需后端即可浏览音色**。合成仍依赖 Express / `msedge-tts`：浏览器（Chrome/Firefox）无法设置 Edge TTS 所需的 WebSocket 请求头，不能在页面内直连微软服务；请本地运行 `bun run dev`，或构建时配置 `VITE_API_BASE` 指向可用后端。
+
+### 重要：TTS 合成需要 Node 后端
 
 GitHub Pages **只能托管静态文件**，无法运行 Express / `msedge-tts`。静态页 alone 不能合成语音。
 
@@ -31,7 +33,7 @@ GitHub Pages **只能托管静态文件**，无法运行 Express / `msedge-tts`�
 VITE_API_BASE=https://your-api.example.com bun run build
 ```
 
-或在 Actions 中配置同名环境变量。留空则请求同源 `/api/...`（适合本地 `tsx server.ts`）。
+或在 Actions 中配置同名环境变量。留空则请求同源 `/api/...`（适合本地 `tsx server.ts`）；无后端时音色回退到内置精选列表，合成会提示需本地或远程 API。
 
 参见 `.env.example` 中的 `VITE_API_BASE` 说明。仓库中请勿提交密钥。
 

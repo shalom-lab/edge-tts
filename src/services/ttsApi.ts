@@ -1,7 +1,11 @@
 import { VoiceItem, ProsodyConfig } from '../types';
+import { getCuratedVoices } from '../data/voices';
 
 /** API origin for Pages builds; empty = same-origin (local `tsx server.ts`). Strip trailing slash. */
 const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+
+const STATIC_SITE_SYNTH_ERROR =
+  '当前是静态站点，无法在浏览器内直连 Edge TTS（Chrome/Firefox 受限）。请本地运行 bun run dev，或配置 VITE_API_BASE 指向后端。';
 
 export interface SynthesisResponse {
   blob: Blob;
@@ -11,8 +15,8 @@ export interface SynthesisResponse {
   contentType: string;
 }
 
-export async function fetchVoicesApi(): Promise<VoiceItem[]> {
-  const res = await fetch(`${API_BASE}/api/voices`);
+async function fetchVoicesFromUrl(url: string): Promise<VoiceItem[]> {
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`获取音色列表失败: ${res.statusText}`);
   }
@@ -21,6 +25,20 @@ export async function fetchVoicesApi(): Promise<VoiceItem[]> {
     throw new Error(data.error || '获取音色列表失败');
   }
   return data.voices;
+}
+
+export async function fetchVoicesApi(): Promise<VoiceItem[]> {
+  // Explicit remote backend (e.g. Pages build with VITE_API_BASE)
+  if (API_BASE) {
+    return fetchVoicesFromUrl(`${API_BASE}/api/voices`);
+  }
+
+  // Same-origin: works with local `tsx server.ts`; on GitHub Pages there is no /api
+  try {
+    return await fetchVoicesFromUrl('/api/voices');
+  } catch {
+    return getCuratedVoices();
+  }
 }
 
 export async function synthesizeAudioApi(
@@ -39,21 +57,36 @@ export async function synthesizeAudioApi(
     rawSSML: rawSSML?.trim() ? rawSSML.trim() : undefined,
   };
 
-  const response = await fetch(`${API_BASE}/api/synthesize`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/synthesize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    if (!API_BASE) {
+      throw new Error(STATIC_SITE_SYNTH_ERROR);
+    }
+    throw new Error('合成请求失败: 无法连接后端');
+  }
 
   if (!response.ok) {
+    // Pages often returns 404 HTML for missing /api — treat as no backend
+    if (!API_BASE && (response.status === 404 || response.status === 405)) {
+      throw new Error(STATIC_SITE_SYNTH_ERROR);
+    }
     let errorMsg = `合成请求失败 (${response.status})`;
     try {
       const errJson = await response.json();
       if (errJson.error) errorMsg = errJson.error;
     } catch {
-      // not json
+      // not json (e.g. static 404 page)
+      if (!API_BASE) {
+        throw new Error(STATIC_SITE_SYNTH_ERROR);
+      }
     }
     throw new Error(errorMsg);
   }
