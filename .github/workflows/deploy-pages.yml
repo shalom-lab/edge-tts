@@ -30,6 +30,10 @@ jobs:
       - name: Build
         env:
           BASE_PATH: /edge-tts/
+          # Optional: set repo Actions variable/secret VITE_API_BASE to your
+          # deployed Worker URL (e.g. https://edge-tts-api.<account>.workers.dev)
+          # so Pages can call /api/voices and /api/synthesize.
+          VITE_API_BASE: ${{ vars.VITE_API_BASE || secrets.VITE_API_BASE }}
         run: bun run build
 
       - name: Setup Pages

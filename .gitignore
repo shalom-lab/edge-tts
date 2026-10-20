@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+.wrangler/
+.wrangler-dry/
+worker/.wrangler/
+worker/.wrangler-dry/
+worker/node_modules/

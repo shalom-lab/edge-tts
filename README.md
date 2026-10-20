@@ -1,6 +1,6 @@
 # Edge TTS Laboratory
 
-基于 Microsoft Edge TTS（`msedge-tts`）的语音合成实验前端：Vite + React，本地由 Express（`server.ts`）提供 `/api/voices` 与 `/api/synthesize`。
+基于 Microsoft Edge TTS 的语音合成实验前端：Vite + React。本地由 Express（`server.ts`）提供 `/api/voices` 与 `/api/synthesize`；GitHub Pages 可接 Cloudflare Worker 作为同款 API。
 
 ## 本地开发（全栈同域）
 
@@ -21,21 +21,67 @@ bun run dev
 
 CI 在构建时设置 `BASE_PATH=/edge-tts/`，使资源路径适配项目 Pages。
 
-音色列表由前端内置的精选目录（`src/data/voices.ts`）提供，因此 Pages **无需后端即可浏览音色**。合成仍依赖 Express / `msedge-tts`：浏览器（Chrome/Firefox）无法设置 Edge TTS 所需的 WebSocket 请求头，不能在页面内直连微软服务；请本地运行 `bun run dev`，或构建时配置 `VITE_API_BASE` 指向可用后端。
+音色列表由前端内置的精选目录（`src/data/voices.ts`）提供，因此 Pages **无需后端即可浏览音色**。合成仍依赖后端（Express 或 Cloudflare Worker）：浏览器无法设置 Edge TTS 所需的 WebSocket 请求头，不能在页面内直连微软服务。
 
-### 重要：TTS 合成需要 Node 后端
+### 配置远程 API（可选）
 
-GitHub Pages **只能托管静态文件**，无法运行 Express / `msedge-tts`。静态页 alone 不能合成语音。
-
-若要把 Pages 前端接到真实 API，请在 **构建时** 设置：
+构建时设置：
 
 ```bash
 VITE_API_BASE=https://your-api.example.com bun run build
 ```
 
-或在 Actions 中配置同名环境变量。留空则请求同源 `/api/...`（适合本地 `tsx server.ts`）；无后端时音色回退到内置精选列表，合成会提示需本地或远程 API。
+或在 GitHub 仓库 **Settings → Secrets and variables → Actions → Variables** 中新增变量 `VITE_API_BASE`（也可用同名 Secret），再重新跑 Pages 工作流。留空则请求同源 `/api/...`（适合本地 `tsx server.ts`）。
 
-参见 `.env.example` 中的 `VITE_API_BASE` 说明。仓库中请勿提交密钥。
+参见 `.env.example`。仓库中请勿提交密钥。
+
+## Cloudflare Worker
+
+仓库内 `worker/` 是与前端契约一致的 TTS 后端，跑在 Cloudflare **免费套餐**上：
+
+| 路由 | 说明 |
+|------|------|
+| `GET /health` | 健康检查 |
+| `GET /api/voices` | 返回精选音色 JSON（`{ success, voices }`） |
+| `POST /api/synthesize` | JSON body → 原始音频（`audio/mpeg`），含 `X-Synthesis-Duration-Ms` |
+
+Worker 用 `fetch` + `Upgrade: websocket` 连接 `api.msedgeservices.com`（Sec-MS-GEC v2），**不**使用 Node `ws` 包。
+
+### 部署步骤
+
+1. 登录 Cloudflare（只需一次）：
+
+```bash
+bunx wrangler login
+```
+
+2. 从仓库根目录部署：
+
+```bash
+bun run worker:deploy
+```
+
+或：
+
+```bash
+cd worker && bun install && bunx wrangler deploy
+```
+
+3. 记下输出的 `*.workers.dev` URL（形如 `https://edge-tts-api.<subdomain>.workers.dev`）。
+
+4. 在 GitHub 仓库设置 Actions 变量 **`VITE_API_BASE`** 为该 URL（不要末尾斜杠）。
+
+5. 重新运行 **Deploy GitHub Pages** workflow（push 到 `main` 或 `workflow_dispatch`），使静态站带上新的 API 地址。
+
+本地调试 Worker：
+
+```bash
+bun run worker:dev
+```
+
+然后将 `VITE_API_BASE=http://127.0.0.1:8787` 用于前端，或直接 `curl` Worker 路由。
+
+> 本仓库 CI **不会**自动部署 Worker；登录与 `wrangler deploy` 由维护者在本地完成。Worker 内无密钥可提交。
 
 ## 脚本
 
@@ -45,3 +91,5 @@ VITE_API_BASE=https://your-api.example.com bun run build
 | `bun run build` | 构建静态前端到 `dist/` |
 | `bun run preview` | 预览静态构建 |
 | `bun run lint` | `tsc --noEmit` |
+| `bun run worker:dev` | 本地跑 Cloudflare Worker |
+| `bun run worker:deploy` | 部署 Worker 到 Cloudflare |

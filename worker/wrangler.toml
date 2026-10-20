@@ -1,0 +1,5 @@
+name = "edge-tts-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# Free plan: no paid bindings. WebSocket upgrade via fetch() needs no extra flags.
