@@ -4,11 +4,11 @@ import { synthesize } from './synthesize';
 const ALLOWED_ORIGIN_EXACT = new Set(['https://shalom-lab.github.io']);
 
 function isAllowedOrigin(origin: string | null): boolean {
+  // Production Worker: only this Pages site. Localhost is intentionally NOT
+  // allowed — otherwise anyone running a local page could hit the public API.
+  // Local TTS use Express (`bun run dev`) or `wrangler dev` + local VITE_API_BASE.
   if (!origin) return false;
-  if (ALLOWED_ORIGIN_EXACT.has(origin)) return true;
-  if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
-  if (/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return true;
-  return false;
+  return ALLOWED_ORIGIN_EXACT.has(origin);
 }
 
 function corsHeadersFor(origin: string | null): Record<string, string> {

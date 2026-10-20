@@ -46,12 +46,13 @@ VITE_API_BASE=https://your-api.example.com bun run build
 和买 VPS 的区别：VPS 是一台一直开着的机器；Worker 是按次执行、按请求计费/计额度，适合这种轻量 API。
 
 当前线上 Worker：`https://edge-tts-api.shalom-lab.workers.dev`  
-**访问限制**：`/api/voices` 与 `/api/synthesize` **只允许**浏览器 Origin 为：
+**访问限制**：`/api/voices` 与 `/api/synthesize` **只允许**浏览器 Origin：
 
 - `https://shalom-lab.github.io`（本站 Pages）
-- `http://localhost` / `http://127.0.0.1`（任意端口，本地调试）
 
-其它网站、无 Origin 的脚本直调会 **403**。`GET /health` 不做 Origin 校验（运维探测用）。
+其它网站、**包括别人的 localhost**、以及无 Origin 的脚本直调都会 **403**。`GET /health` 不做 Origin 校验（运维探测用）。
+
+本地开发请用 Express（`bun run dev`，同域 `/api`）或 `bun run worker:dev` 打本地 Worker，不要依赖线上 Worker 放行 localhost。
 
 ## Cloudflare Worker
 
@@ -103,7 +104,7 @@ bun run worker:dev
 >
 > **滥用防护（已启用）**
 > - `POST /api/synthesize`：按客户端 IP 约 **20 次 / 60 秒**（Cloudflare Rate Limiting，按机房计数）
-> - `/api/voices` 与 `/api/synthesize`：仅允许本站 Origin `https://shalom-lab.github.io`（以及本地 `localhost` / `127.0.0.1`）；其它站或无 Origin 返回 403
+> - `/api/voices` 与 `/api/synthesize`：仅允许本站 Origin `https://shalom-lab.github.io`（**不含** localhost）；其它站或无 Origin 返回 403
 > - 免费套餐仍有约 **10 万请求/天** 上限；到顶后接口当天不可用，一般不产生额外扣费
 
 
