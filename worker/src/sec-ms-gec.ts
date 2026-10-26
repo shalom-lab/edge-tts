@@ -306,10 +306,41 @@ export function hashSecMsGecPayload(payload: string) {
 
 export function generateSecMsGec(
   trustedClientToken: string,
-  unixSeconds = Date.now() / 1000
+  unixSeconds?: number
 ) {
-  let ticks = unixSeconds + WIN_EPOCH_SECONDS;
+  const base = unixSeconds ?? getUnixTimestamp();
+  let ticks = base + WIN_EPOCH_SECONDS;
   ticks -= ticks % TOKEN_WINDOW_SECONDS;
   ticks *= 1e7;
   return hashSecMsGecPayload(`${ticks.toFixed(0)}${trustedClientToken}`);
+}
+
+/** Module-level clock skew (seconds) applied when generating Sec-MS-GEC. */
+export let clockSkewSeconds = 0;
+
+/**
+ * Adjust clock skew from a server Date header (RFC 2616 / HTTP-date).
+ * Matches rany2/edge-tts DRM.handle_client_response_error:
+ * skew += serverUnix - (now + currentSkew).
+ */
+export function adjustClockSkewFromServerDate(dateHeader: string): number {
+  const serverUnix = parseRfc2616Date(dateHeader);
+  if (serverUnix === null) {
+    throw new Error(`Failed to parse server Date header: ${dateHeader}`);
+  }
+  const clientUnix = Date.now() / 1000 + clockSkewSeconds;
+  const delta = serverUnix - clientUnix;
+  clockSkewSeconds += delta;
+  return delta;
+}
+
+/** Parse HTTP-date (RFC 2616) into Unix seconds, or null. */
+export function parseRfc2616Date(date: string): number | null {
+  const ms = Date.parse(date);
+  if (Number.isNaN(ms)) return null;
+  return ms / 1000;
+}
+
+export function getUnixTimestamp(): number {
+  return Date.now() / 1000 + clockSkewSeconds;
 }

@@ -2,13 +2,14 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { MsEdgeTTS, OUTPUT_FORMAT, Voice } from 'msedge-tts';
+import { MsEdgeTTS, Voice } from 'msedge-tts';
 import {
   getCuratedVoices,
   processEdgeVoices,
   type RawEdgeVoice,
 } from './src/data/voices';
 import type { VoiceItem } from './src/types';
+import { synthesizeNode } from './server/synthesize-node';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,7 +56,7 @@ async function startServer() {
     }
   });
 
-  // API 2: Synthesize speech
+  // API 2: Synthesize speech (bing readaloud + Sec-MS-GEC v2; no msedge-tts WS)
   app.post('/api/synthesize', async (req, res) => {
     const startTime = Date.now();
     try {
@@ -73,66 +74,43 @@ async function startServer() {
         return res.status(400).json({ success: false, error: '缺少合成文本内容 (text)' });
       }
 
-      const tts = new MsEdgeTTS({ enableLogger: false, connectionTimeoutMs: 15000 });
-
-      // Determine output format
-      let outputFormat = OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3;
-      if (format === 'audio-24khz-48kbitrate-mono-mp3') {
-        outputFormat = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
-      } else if (format === 'webm-24khz-16bit-mono-opus') {
-        outputFormat = OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS;
-      }
-
-      await tts.setMetadata(voice, outputFormat);
-
-      let audioStream;
-      if (rawSSML && typeof rawSSML === 'string' && rawSSML.trim().startsWith('<speak')) {
-        const streamResult = tts.rawToStream(rawSSML);
-        audioStream = streamResult.audioStream;
-      } else {
-        const prosodyOptions = {
-          rate: typeof rate === 'number' ? (rate >= 0 ? `+${rate}%` : `${rate}%`) : rate,
-          pitch: typeof pitch === 'number' ? (pitch >= 0 ? `+${pitch}Hz` : `${pitch}Hz`) : pitch,
-          volume: typeof volume === 'number' ? (volume >= 0 ? `+${volume}%` : `${volume}%`) : volume,
-        };
-        const streamResult = tts.toStream(text, prosodyOptions);
-        audioStream = streamResult.audioStream;
-      }
-
-      const chunks: Buffer[] = [];
-      let isEnded = false;
-
-      audioStream.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
+      const result = await synthesizeNode({
+        text,
+        voice,
+        rate:
+          typeof rate === 'number' ? (rate >= 0 ? `+${rate}%` : `${rate}%`) : rate,
+        pitch:
+          typeof pitch === 'number'
+            ? pitch >= 0
+              ? `+${pitch}Hz`
+              : `${pitch}Hz`
+            : pitch,
+        volume:
+          typeof volume === 'number'
+            ? volume >= 0
+              ? `+${volume}%`
+              : `${volume}%`
+            : volume,
+        format,
+        rawSSML,
       });
 
-      audioStream.on('end', () => {
-        if (isEnded) return;
-        isEnded = true;
-        const totalBuffer = Buffer.concat(chunks);
-        const durationMs = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
+      const isWebm = result.format.includes('webm');
+      const fileExt = isWebm ? 'webm' : 'mp3';
+      const sanitizedVoice = String(voice).replace(/[^a-zA-Z0-9_-]/g, '');
 
-        const isWebm = format.includes('webm');
-        const contentType = isWebm ? 'audio/webm' : 'audio/mpeg';
-        const fileExt = isWebm ? 'webm' : 'mp3';
-        const sanitizedVoice = voice.replace(/[^a-zA-Z0-9_-]/g, '');
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Length', result.audio.length.toString());
+      res.setHeader('X-Synthesis-Duration-Ms', durationMs.toString());
+      res.setHeader('X-Audio-Bytes', result.audio.length.toString());
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="edge_tts_${sanitizedVoice}_${Date.now()}.${fileExt}"`
+      );
+      res.setHeader('Cache-Control', 'public, max-age=3600');
 
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Content-Length', totalBuffer.length.toString());
-        res.setHeader('X-Synthesis-Duration-Ms', durationMs.toString());
-        res.setHeader('X-Audio-Bytes', totalBuffer.length.toString());
-        res.setHeader('Content-Disposition', `inline; filename="edge_tts_${sanitizedVoice}_${Date.now()}.${fileExt}"`);
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-
-        res.send(totalBuffer);
-      });
-
-      audioStream.on('error', (streamErr) => {
-        if (isEnded) return;
-        isEnded = true;
-        console.error('Audio stream error during synthesis:', streamErr);
-        res.status(500).json({ success: false, error: '音频流传输失败: ' + String(streamErr) });
-      });
+      res.send(result.audio);
     } catch (err: unknown) {
       console.error('Synthesis request error:', err);
       const msg = err instanceof Error ? err.message : String(err);

@@ -1,19 +1,31 @@
 /**
  * Edge TTS synthesizer for Cloudflare Workers.
  * Uses fetch + Upgrade: websocket (NOT the Node `ws` package).
- * Endpoint: api.msedgeservices.com with Sec-MS-GEC v2.
+ * Primary: speech.platform.bing.com readaloud (rany2/edge-tts).
+ * Fallback: api.msedgeservices.com with Ocp-Apim-Subscription-Key.
  */
 
-import { generateSecMsGec } from './sec-ms-gec';
+import {
+  adjustClockSkewFromServerDate,
+  generateSecMsGec,
+} from './sec-ms-gec';
 
 const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-const SYNTHESIS_URL =
+
+const BING_SYNTHESIS_URL =
+  'https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
+const MSEDGE_SYNTHESIS_URL =
   'https://api.msedgeservices.com/tts/cognitiveservices/websocket/v1';
+
 const CHROMIUM_FULL_VERSION = '143.0.3650.75';
 const CHROMIUM_MAJOR = CHROMIUM_FULL_VERSION.split('.')[0]!;
 const SEC_MS_GEC_VERSION = `2-${CHROMIUM_FULL_VERSION}`;
 const DEFAULT_FORMAT = 'audio-24khz-96kbitrate-mono-mp3';
 const SYNTHESIS_TIMEOUT_MS = 60_000;
+/** Match rany2/edge-tts: split escaped text at ~4096 UTF-8 bytes. */
+const SSML_BYTE_LIMIT = 4096;
+const MAX_TRANSIENT_RETRIES = 2;
+const TRANSIENT_BACKOFF_MS = 250;
 
 type AcceptableWebSocket = WebSocket & { accept(): void };
 type UpgradeResponse = Response & { webSocket?: AcceptableWebSocket };
@@ -27,6 +39,8 @@ export interface SynthesizeInput {
   format?: string;
   rawSSML?: string;
 }
+
+type EndpointKind = 'bing' | 'msedge';
 
 function escapeXml(text: string): string {
   return text
@@ -76,6 +90,24 @@ export function buildSsml(
     `<voice name="${escapeXml(voice)}">` +
     `<prosody rate="${escapeXml(rate)}" pitch="${escapeXml(pitch)}" volume="${escapeXml(volume)}">` +
     `${body}` +
+    `</prosody></voice></speak>`
+  );
+}
+
+/** Build SSML from already-escaped body text (used after byte-splitting). */
+function buildSsmlFromEscaped(
+  escapedBody: string,
+  voice: string,
+  rate: string,
+  pitch: string,
+  volume: string
+): string {
+  const lang = localeFromVoice(voice);
+  return (
+    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${lang}">` +
+    `<voice name="${escapeXml(voice)}">` +
+    `<prosody rate="${escapeXml(rate)}" pitch="${escapeXml(pitch)}" volume="${escapeXml(volume)}">` +
+    `${escapedBody}` +
     `</prosody></voice></speak>`
   );
 }
@@ -157,6 +189,159 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
     offset += c.byteLength;
   }
   return out;
+}
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/**
+ * Split escaped text into ~byteLimit UTF-8 chunks at newlines/spaces,
+ * without breaking multi-byte chars or XML entities (rany2 approach).
+ */
+function isValidUtf8Prefix(bytes: Uint8Array, end: number): boolean {
+  try {
+    decoder.decode(bytes.subarray(0, end), { stream: false });
+    // Also reject if we cut a multi-byte sequence: check trailing continuation
+    if (end <= 0) return false;
+    // Walk back over continuation bytes; lead byte must claim exact length
+    let i = end - 1;
+    let cont = 0;
+    while (i >= 0 && (bytes[i]! & 0xc0) === 0x80) {
+      cont += 1;
+      i -= 1;
+    }
+    if (i < 0) return cont === 0;
+    const lead = bytes[i]!;
+    let need = 0;
+    if ((lead & 0x80) === 0) need = 0;
+    else if ((lead & 0xe0) === 0xc0) need = 1;
+    else if ((lead & 0xf0) === 0xe0) need = 2;
+    else if ((lead & 0xf8) === 0xf0) need = 3;
+    else return false;
+    return cont === need;
+  } catch {
+    return false;
+  }
+}
+
+function safeUtf8SplitPoint(bytes: Uint8Array, limit: number): number {
+  let splitAt = Math.min(limit, bytes.byteLength);
+  while (splitAt > 0 && !isValidUtf8Prefix(bytes, splitAt)) {
+    splitAt -= 1;
+  }
+  return splitAt;
+}
+
+export function splitTextByByteLength(text: string, byteLimit = SSML_BYTE_LIMIT): string[] {
+  let bytes = encoder.encode(text);
+  const parts: string[] = [];
+
+  while (bytes.byteLength > byteLimit) {
+    let splitAt = -1;
+    const view = bytes.subarray(0, byteLimit);
+    for (let i = view.byteLength - 1; i >= 0; i--) {
+      if (view[i] === 0x0a) {
+        splitAt = i;
+        break;
+      }
+    }
+    if (splitAt < 0) {
+      for (let i = view.byteLength - 1; i >= 0; i--) {
+        if (view[i] === 0x20) {
+          splitAt = i;
+          break;
+        }
+      }
+    }
+    if (splitAt < 0) {
+      splitAt = safeUtf8SplitPoint(bytes, byteLimit);
+    }
+
+    // Avoid splitting inside &...; entity
+    const before = decoder.decode(bytes.subarray(0, Math.max(splitAt, 0)));
+    const amp = before.lastIndexOf('&');
+    if (amp >= 0 && before.indexOf(';', amp) < 0) {
+      splitAt = encoder.encode(before.slice(0, amp)).byteLength;
+    }
+
+    if (splitAt <= 0) {
+      splitAt = safeUtf8SplitPoint(bytes, byteLimit);
+      if (splitAt <= 0) splitAt = Math.min(1, bytes.byteLength);
+    }
+
+    const chunk = decoder.decode(bytes.subarray(0, splitAt)).trim();
+    if (chunk) parts.push(chunk);
+    bytes = bytes.subarray(splitAt === 0 ? 1 : splitAt);
+  }
+
+  const rest = decoder.decode(bytes).trim();
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+function wssHeaders(): Record<string, string> {
+  return {
+    'User-Agent':
+      `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ` +
+      `(KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR}.0.0.0 Safari/537.36 ` +
+      `Edg/${CHROMIUM_MAJOR}.0.0.0`,
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    'Accept-Language': 'en-US,en;q=0.9',
+    Pragma: 'no-cache',
+    'Cache-Control': 'no-cache',
+    Origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+    'Sec-WebSocket-Version': '13',
+    Cookie: `muid=${makeMuid()};`,
+    Upgrade: 'websocket',
+  };
+}
+
+function buildUpgradeUrl(kind: EndpointKind): string {
+  const secMsGec = generateSecMsGec(TRUSTED_CLIENT_TOKEN);
+  const connectionId = makeId();
+  const base = kind === 'bing' ? BING_SYNTHESIS_URL : MSEDGE_SYNTHESIS_URL;
+  const url = new URL(base);
+  if (kind === 'bing') {
+    url.searchParams.set('TrustedClientToken', TRUSTED_CLIENT_TOKEN);
+  } else {
+    url.searchParams.set('Ocp-Apim-Subscription-Key', TRUSTED_CLIENT_TOKEN);
+  }
+  url.searchParams.set('Sec-MS-GEC', secMsGec);
+  url.searchParams.set('Sec-MS-GEC-Version', SEC_MS_GEC_VERSION);
+  url.searchParams.set('ConnectionId', connectionId);
+  return url.toString();
+}
+
+function endpointLabel(kind: EndpointKind): string {
+  return kind === 'bing' ? 'speech.platform.bing.com' : 'api.msedgeservices.com';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+class UpgradeError extends Error {
+  status: number;
+  endpoint: string;
+  clockSkewRetried: boolean;
+  dateHeader: string | null;
+
+  constructor(
+    message: string,
+    opts: {
+      status: number;
+      endpoint: string;
+      clockSkewRetried: boolean;
+      dateHeader?: string | null;
+    }
+  ) {
+    super(message);
+    this.name = 'UpgradeError';
+    this.status = opts.status;
+    this.endpoint = opts.endpoint;
+    this.clockSkewRetried = opts.clockSkewRetried;
+    this.dateHeader = opts.dateHeader ?? null;
+  }
 }
 
 async function collectAudioFromWebSocket(
@@ -248,6 +433,123 @@ async function collectAudioFromWebSocket(
   });
 }
 
+async function upgradeOnce(
+  kind: EndpointKind,
+  clockSkewRetried: boolean
+): Promise<{ ws: AcceptableWebSocket; kind: EndpointKind }> {
+  const url = buildUpgradeUrl(kind);
+  const label = endpointLabel(kind);
+  let upgradeResponse: UpgradeResponse;
+  try {
+    upgradeResponse = (await fetch(url, {
+      headers: wssHeaders(),
+    })) as UpgradeResponse;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new UpgradeError(`WebSocket upgrade network error on ${label}: ${msg}`, {
+      status: 0,
+      endpoint: label,
+      clockSkewRetried,
+    });
+  }
+
+  if (upgradeResponse.status === 101 && upgradeResponse.webSocket) {
+    return { ws: upgradeResponse.webSocket, kind };
+  }
+
+  const dateHeader = upgradeResponse.headers.get('Date');
+  throw new UpgradeError(
+    `WebSocket upgrade failed on ${label} with status ${upgradeResponse.status}` +
+      (clockSkewRetried ? ' (after clock-skew retry)' : ''),
+    {
+      status: upgradeResponse.status,
+      endpoint: label,
+      clockSkewRetried,
+      dateHeader,
+    }
+  );
+}
+
+/**
+ * Connect with clock-skew retry on 403 and a few transient retries.
+ * Does not leak tokens in error messages.
+ */
+async function connectWithRetries(
+  kind: EndpointKind
+): Promise<{ ws: AcceptableWebSocket; kind: EndpointKind }> {
+  let clockSkewRetried = false;
+  let lastErr: UpgradeError | null = null;
+
+  for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await sleep(TRANSIENT_BACKOFF_MS * attempt);
+    }
+    try {
+      return await upgradeOnce(kind, clockSkewRetried);
+    } catch (err) {
+      if (!(err instanceof UpgradeError)) throw err;
+      lastErr = err;
+
+      // Clock skew: 403 + Date header → adjust once, then retry immediately
+      if (err.status === 403 && !clockSkewRetried && err.dateHeader) {
+        try {
+          adjustClockSkewFromServerDate(err.dateHeader);
+          clockSkewRetried = true;
+          return await upgradeOnce(kind, true);
+        } catch (skewErr) {
+          const skewMsg = skewErr instanceof Error ? skewErr.message : String(skewErr);
+          lastErr = new UpgradeError(
+            `${err.message}; clock-skew adjust failed: ${skewMsg}`,
+            {
+              status: err.status,
+              endpoint: err.endpoint,
+              clockSkewRetried: true,
+              dateHeader: err.dateHeader,
+            }
+          );
+        }
+      }
+
+      // Do not retry clear client/auth failures (except the 403 skew path above)
+      if (err.status >= 400 && err.status < 500 && err.status !== 429) {
+        throw lastErr;
+      }
+      // status 0 / 5xx / 429 → transient, continue loop
+    }
+  }
+
+  throw lastErr ?? new UpgradeError(`WebSocket upgrade failed on ${endpointLabel(kind)}`, {
+    status: 0,
+    endpoint: endpointLabel(kind),
+    clockSkewRetried,
+  });
+}
+
+async function synthesizeSsmlChunk(
+  ssml: string,
+  format: string,
+  preferKind: EndpointKind = 'bing'
+): Promise<Uint8Array> {
+  const order: EndpointKind[] =
+    preferKind === 'bing' ? ['bing', 'msedge'] : ['msedge', 'bing'];
+
+  let lastErr: Error | null = null;
+  for (const kind of order) {
+    try {
+      const { ws } = await connectWithRetries(kind);
+      return await collectAudioFromWebSocket(
+        ws,
+        speechConfigMessage(format),
+        ssmlMessage(makeId(), ssml)
+      );
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      // Continue to next endpoint
+    }
+  }
+  throw lastErr ?? new Error('Synthesis failed on all endpoints');
+}
+
 export async function synthesize(input: SynthesizeInput): Promise<{
   audio: Uint8Array;
   contentType: string;
@@ -259,52 +561,30 @@ export async function synthesize(input: SynthesizeInput): Promise<{
   const volume = input.volume || '+0%';
   const format = resolveFormat(input.format);
 
-  let ssml: string;
+  const audioParts: Uint8Array[] = [];
+
   if (input.rawSSML && typeof input.rawSSML === 'string' && input.rawSSML.trim().startsWith('<speak')) {
-    ssml = input.rawSSML.trim();
+    audioParts.push(await synthesizeSsmlChunk(input.rawSSML.trim(), format));
   } else {
     const text = input.text?.trim();
     if (!text) {
       throw new Error('缺少合成文本内容 (text)');
     }
-    ssml = buildSsml(text, voice, rate, pitch, volume);
+    const escaped = escapeXml(removeInvalidXmlChars(text));
+    const segments = splitTextByByteLength(escaped, SSML_BYTE_LIMIT);
+    if (!segments.length) {
+      throw new Error('缺少合成文本内容 (text)');
+    }
+    for (const segment of segments) {
+      const ssml = buildSsmlFromEscaped(segment, voice, rate, pitch, volume);
+      audioParts.push(await synthesizeSsmlChunk(ssml, format));
+    }
   }
 
-  const secMsGec = generateSecMsGec(TRUSTED_CLIENT_TOKEN);
-  const connectionId = makeId();
-  const url = new URL(SYNTHESIS_URL);
-  url.searchParams.set('Ocp-Apim-Subscription-Key', TRUSTED_CLIENT_TOKEN);
-  url.searchParams.set('Sec-MS-GEC', secMsGec);
-  url.searchParams.set('Sec-MS-GEC-Version', SEC_MS_GEC_VERSION);
-  url.searchParams.set('ConnectionId', connectionId);
-
-  const upgradeResponse = (await fetch(url.toString(), {
-    headers: {
-      'User-Agent':
-        `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ` +
-        `(KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR}.0.0.0 Safari/537.36 ` +
-        `Edg/${CHROMIUM_MAJOR}.0.0.0`,
-      'Accept-Encoding': 'gzip, deflate, br, zstd',
-      'Accept-Language': 'en-US,en;q=0.9',
-      Pragma: 'no-cache',
-      'Cache-Control': 'no-cache',
-      Origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
-      'Sec-WebSocket-Version': '13',
-      Cookie: `muid=${makeMuid()};`,
-      Upgrade: 'websocket',
-    },
-  })) as UpgradeResponse;
-
-  if (upgradeResponse.status !== 101 || !upgradeResponse.webSocket) {
-    throw new Error(`WebSocket upgrade failed with status ${upgradeResponse.status}`);
+  const audio = concatChunks(audioParts);
+  if (!audio.byteLength) {
+    throw new Error('No audio data received');
   }
-
-  const requestId = makeId();
-  const audio = await collectAudioFromWebSocket(
-    upgradeResponse.webSocket,
-    speechConfigMessage(format),
-    ssmlMessage(requestId, ssml)
-  );
 
   return {
     audio,
