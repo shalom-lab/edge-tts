@@ -57,9 +57,9 @@ export const SingleVoiceTester: React.FC<SingleVoiceTesterProps> = ({
     'zh-CN-XiaoxiaoNeural',
     'zh-CN-YunxiNeural',
     'zh-CN-YunjianNeural',
-    'zh-CN-XiaohanNeural',
+    'zh-CN-XiaoyiNeural',
     'zh-CN-liaoning-XiaobeiNeural',
-    'zh-CN-sichuan-YunxiNeural',
+    'zh-CN-shaanxi-XiaoniNeural',
     'zh-TW-HsiaoChenNeural',
     'en-US-JennyNeural',
   ];

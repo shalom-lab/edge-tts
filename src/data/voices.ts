@@ -1,6 +1,6 @@
 import type { VoiceItem } from '../types';
 
-/** Curated label/desc/tags for popular Chinese / EN / JA / KO voices. */
+/** Curated label/desc/tags for voices still live on Edge TTS readaloud (2026-10). */
 export const VOICE_META: Record<
   string,
   { label: string; desc: string; tags: string[]; featured?: boolean }
@@ -10,25 +10,9 @@ export const VOICE_META: Record<
   'zh-CN-YunjianNeural': { label: '云健', desc: '磁性浑厚，影视剧情与纪录片', tags: ['磁性男声', '影视解说', '纪录片'], featured: true },
   'zh-CN-XiaoyiNeural': { label: '晓伊', desc: '知性从容，广播散文与小说叙事', tags: ['知性女声', '广播电台', '长文有声'], featured: true },
   'zh-CN-YunyangNeural': { label: '云扬', desc: '专业标准，新闻资讯与政企播报', tags: ['新闻播音', '正气男声', '政企宣传'], featured: true },
-  'zh-CN-XiaochenNeural': { label: '晓辰', desc: '活泼清新，日常对话与助手播报', tags: ['清新女声', '日常对话'], featured: false },
-  'zh-CN-XiaohanNeural': { label: '晓涵', desc: '温婉细腻，情感电台与治愈心语', tags: ['细腻情感', '治愈女声'], featured: true },
-  'zh-CN-XiaomengNeural': { label: '晓梦', desc: '柔和甜美，有声书与童话故事', tags: ['故事有声', '柔美女声'], featured: false },
-  'zh-CN-XiaomoNeural': { label: '晓墨', desc: '文艺清澈，散文诗歌与抒情独白', tags: ['文艺女声', '诗歌独白'], featured: true },
-  'zh-CN-XiaoqiuNeural': { label: '晓秋', desc: '端庄稳重大气，晚间播音主持人', tags: ['端庄大气', '播音主持'], featured: false },
-  'zh-CN-XiaoruiNeural': { label: '晓睿', desc: '成熟干练，商业资讯与严肃读物', tags: ['职场干练', '财经商务'], featured: false },
-  'zh-CN-XiaoshuangNeural': { label: '晓双', desc: '软萌可爱，幼儿童话与卡通角色', tags: ['软萌童声', '儿童故事', '动漫配音'], featured: true },
-  'zh-CN-XiaoxuanNeural': { label: '晓萱', desc: '知心开朗，生活杂谈与播客对话', tags: ['活泼亲和', '生活娱乐'], featured: false },
-  'zh-CN-XiaoyanNeural': { label: '晓颜', desc: '专业耐听，标准智能客服与导航', tags: ['智能客服', '专业导航'], featured: false },
-  'zh-CN-XiaoyouNeural': { label: '晓悠', desc: '轻快灵动，二次元与青春少女', tags: ['元气少女', '轻快灵动'], featured: true },
-  'zh-CN-XiaozhenNeural': { label: '晓甄', desc: '治愈知性，舒缓睡前故事与随笔', tags: ['治愈温暖', '睡前有声'], featured: false },
-  'zh-CN-YunfengNeural': { label: '云枫', desc: '沧桑浑厚，历史传奇与宏大史诗', tags: ['沧桑深沉', '历史纪录片'], featured: false },
-  'zh-CN-YunhaoNeural': { label: '云皓', desc: '激昂有力，广告促销与热血旁白', tags: ['激情广告', '热血男声'], featured: true },
-  'zh-CN-YunxiaNeural': { label: '云夏', desc: '阳光朝气，少年男孩与童趣科普', tags: ['阳光少年', '科普读物'], featured: false },
-  'zh-CN-YunyeNeural': { label: '云野', desc: '沉浸叙事，悬疑探案与悬疑解说', tags: ['悬疑故事', '沉浸叙事'], featured: true },
-  'zh-CN-YunzeNeural': { label: '云泽', desc: '从容醇厚，评书相声与纪实文学', tags: ['评书纪实', '浑厚男声'], featured: false },
+  'zh-CN-YunxiaNeural': { label: '云夏', desc: '阳光朝气，少年男孩与童趣科普', tags: ['阳光少年', '科普读物'], featured: true },
   'zh-CN-liaoning-XiaobeiNeural': { label: '晓北 (东北话)', desc: '辽宁口音，诙谐幽默接地气', tags: ['东北方言', '搞笑段子', '特色方言'], featured: true },
   'zh-CN-shaanxi-XiaoniNeural': { label: '晓妮 (陕西话)', desc: '秦腔陕味，淳朴豪爽乡土特色', tags: ['陕西方言', '特色方言'], featured: true },
-  'zh-CN-sichuan-YunxiNeural': { label: '云希 (四川话)', desc: '川渝口音，风趣幽默巴适得很', tags: ['四川方言', '特色方言', '川普'], featured: true },
   'zh-HK-HiuMaanNeural': { label: '晓曼 (粤语)', desc: '标准粤语女声，清晰纯正自然', tags: ['粤语女声', '香港话'], featured: true },
   'zh-HK-WanLungNeural': { label: '云龙 (粤语)', desc: '标准粤语男声，稳重干练', tags: ['粤语男声', '香港话'], featured: true },
   'zh-HK-HiuGaaiNeural': { label: '晓佳 (粤语)', desc: '地道港风女声，电台风格', tags: ['粤语女声', '港风电台'], featured: false },
@@ -50,12 +34,7 @@ const MALE_VOICES = new Set([
   'zh-CN-YunxiNeural',
   'zh-CN-YunjianNeural',
   'zh-CN-YunyangNeural',
-  'zh-CN-YunfengNeural',
-  'zh-CN-YunhaoNeural',
   'zh-CN-YunxiaNeural',
-  'zh-CN-YunyeNeural',
-  'zh-CN-YunzeNeural',
-  'zh-CN-sichuan-YunxiNeural',
   'zh-HK-WanLungNeural',
   'zh-TW-YunJheNeural',
   'en-US-GuyNeural',

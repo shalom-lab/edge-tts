@@ -21,7 +21,7 @@ bun run dev
 
 CI 在构建时设置 `BASE_PATH=/edge-tts/`，使资源路径适配项目 Pages。
 
-音色列表由前端内置的精选目录（`src/data/voices.ts`）提供，因此 Pages **无需后端即可浏览音色**。合成仍依赖后端（Express 或 Cloudflare Worker）：浏览器无法设置 Edge TTS 所需的 WebSocket 请求头，不能在页面内直连微软服务。
+音色列表由前端内置的精选目录（`src/data/voices.ts`）提供，因此 Pages **无需后端即可浏览音色**。 目录只保留微软 Edge TTS readaloud **当前仍在线**的音色（2026-10 起大量普通话女声如晓涵/晓墨等已下线）；试听失败时前端会 toast 提示。合成仍依赖后端（Express 或 Cloudflare Worker）：浏览器无法设置 Edge TTS 所需的 WebSocket 请求头，不能在页面内直连微软服务。
 
 合成历史保存在浏览器 **IndexedDB**（含音频 Blob，约最近 30 条）；收藏仍用 `localStorage`。
 

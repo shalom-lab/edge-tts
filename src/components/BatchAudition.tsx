@@ -27,7 +27,7 @@ export const BatchAudition: React.FC<BatchAuditionProps> = ({ voices }) => {
     'zh-CN-XiaoxiaoNeural',
     'zh-CN-YunxiNeural',
     'zh-CN-YunjianNeural',
-    'zh-CN-XiaohanNeural',
+    'zh-CN-XiaoyiNeural',
     'zh-CN-liaoning-XiaobeiNeural',
     'zh-TW-HsiaoChenNeural',
   ];
@@ -58,7 +58,7 @@ export const BatchAudition: React.FC<BatchAuditionProps> = ({ voices }) => {
         'zh-CN-XiaoxiaoNeural',
         'zh-CN-YunxiNeural',
         'zh-CN-YunjianNeural',
-        'zh-CN-XiaohanNeural',
+        'zh-CN-XiaoyiNeural',
       ]);
     } else if (type === 'female') {
       const females = voices

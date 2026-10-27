@@ -528,12 +528,13 @@ async function connectWithRetries(
 async function synthesizeSsmlChunk(
   ssml: string,
   format: string,
-  preferKind: EndpointKind = 'bing'
+  preferKind: EndpointKind = 'bing',
+  voiceHint?: string
 ): Promise<Uint8Array> {
   const order: EndpointKind[] =
     preferKind === 'bing' ? ['bing', 'msedge'] : ['msedge', 'bing'];
 
-  let lastErr: Error | null = null;
+  const errors: string[] = [];
   for (const kind of order) {
     try {
       const { ws } = await connectWithRetries(kind);
@@ -543,11 +544,20 @@ async function synthesizeSsmlChunk(
         ssmlMessage(makeId(), ssml)
       );
     } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${endpointLabel(kind)}: ${msg}`);
       // Continue to next endpoint
     }
   }
-  throw lastErr ?? new Error('Synthesis failed on all endpoints');
+
+  const joined = errors.join(' | ') || 'unknown';
+  if (/No audio data/i.test(joined)) {
+    const voice = voiceHint ? `「${voiceHint}」` : '该音色';
+    throw new Error(
+      `未收到音频。${voice}可能已从 Edge TTS 下线，请换其他在线音色（${joined}）`
+    );
+  }
+  throw new Error(`Synthesis failed on all endpoints (${joined})`);
 }
 
 export async function synthesize(input: SynthesizeInput): Promise<{
@@ -564,7 +574,7 @@ export async function synthesize(input: SynthesizeInput): Promise<{
   const audioParts: Uint8Array[] = [];
 
   if (input.rawSSML && typeof input.rawSSML === 'string' && input.rawSSML.trim().startsWith('<speak')) {
-    audioParts.push(await synthesizeSsmlChunk(input.rawSSML.trim(), format));
+    audioParts.push(await synthesizeSsmlChunk(input.rawSSML.trim(), format, 'bing', voice));
   } else {
     const text = input.text?.trim();
     if (!text) {
@@ -577,7 +587,7 @@ export async function synthesize(input: SynthesizeInput): Promise<{
     }
     for (const segment of segments) {
       const ssml = buildSsmlFromEscaped(segment, voice, rate, pitch, volume);
-      audioParts.push(await synthesizeSsmlChunk(ssml, format));
+      audioParts.push(await synthesizeSsmlChunk(ssml, format, 'bing', voice));
     }
   }
 

@@ -42,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-600 hidden sm:block">
-                支持 300+ 免费高保真音色 · 语速/音调/音量精调 · MP3 导出
+                精选 Edge TTS 在线音色 · 语速/音调/音量精调 · MP3 导出
               </p>
             </div>
           </div>
