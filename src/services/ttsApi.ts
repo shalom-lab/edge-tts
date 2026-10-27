@@ -1,8 +1,25 @@
 import { VoiceItem, ProsodyConfig } from '../types';
 import { getCuratedVoices } from '../data/voices';
 
-/** API origin for Pages builds; empty = same-origin (local `tsx server.ts`). Strip trailing slash. */
-const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+/** Production Worker used by GitHub Pages when VITE_API_BASE was not set at build time. */
+const DEFAULT_PAGES_API_BASE = 'https://edge-tts-api.shalom-lab.workers.dev';
+
+/**
+ * API origin for synth/voices.
+ * - Build-time VITE_API_BASE wins when set (CI / local override).
+ * - On github.io Pages, fall back to the known Worker so audition never hits same-origin 405.
+ * - Otherwise empty = same-origin (local `tsx server.ts` / wrangler dev proxy).
+ */
+function resolveApiBase(): string {
+  const fromEnv = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+  if (fromEnv) return fromEnv;
+  if (typeof window !== 'undefined' && /\.github\.io$/i.test(window.location.hostname)) {
+    return DEFAULT_PAGES_API_BASE;
+  }
+  return '';
+}
+
+const API_BASE = resolveApiBase();
 
 const STATIC_SITE_SYNTH_ERROR =
   '当前是静态站点，无法在浏览器内直连 Edge TTS（Chrome/Firefox 受限）。请本地运行 bun run dev，或配置 VITE_API_BASE 指向后端。';
@@ -117,14 +134,22 @@ export async function synthesizeAudioApi(
   const contentType = response.headers.get('Content-Type') || 'audio/mpeg';
 
   const blob = await response.blob();
-  const blobUrl = URL.createObjectURL(blob);
+  if (!blob || blob.size === 0) {
+    throw new Error('合成返回空音频，请稍后重试');
+  }
+  // Ensure browsers treat the blob as playable audio even if Content-Type was stripped.
+  const typedBlob =
+    blob.type && blob.type.startsWith('audio/')
+      ? blob
+      : new Blob([blob], { type: contentType.startsWith('audio/') ? contentType : 'audio/mpeg' });
+  const blobUrl = URL.createObjectURL(typedBlob);
 
   return {
-    blob,
+    blob: typedBlob,
     blobUrl,
     durationMs,
-    bytes: blob.size,
-    contentType,
+    bytes: typedBlob.size,
+    contentType: typedBlob.type || contentType,
   };
 }
 

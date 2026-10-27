@@ -36,7 +36,10 @@ export default function App() {
 
   // Quick audition preview audio
   const [auditioningVoice, setAuditioningVoice] = useState<string | null>(null);
+  const [auditionError, setAuditionError] = useState<string | null>(null);
   const auditionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const auditionBlobUrlRef = useRef<string | null>(null);
+  const auditionGenRef = useRef(0);
 
   const loadVoices = async () => {
     setIsLoadingVoices(true);
@@ -116,10 +119,35 @@ export default function App() {
     void clearHistory().catch((e) => console.error('Failed to clear IndexedDB history:', e));
   };
 
+  // Tiny silent WAV — unlocks <audio> during the click gesture before await synth.
+  const SILENT_WAV =
+    'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
+  const revokeAuditionBlob = () => {
+    if (auditionBlobUrlRef.current) {
+      try {
+        URL.revokeObjectURL(auditionBlobUrlRef.current);
+      } catch {
+        /* ignore */
+      }
+      auditionBlobUrlRef.current = null;
+    }
+  };
+
+  const showAuditionError = (msg: string) => {
+    setAuditionError(msg);
+    window.setTimeout(() => {
+      setAuditionError((cur) => (cur === msg ? null : cur));
+    }, 5000);
+  };
+
   // Quick audition player for previewing voices in modal / catalog
   const handleQuickAudition = async (shortName: string) => {
     const voiceObj = voices.find((v) => v.shortName === shortName);
-    if (!voiceObj) return;
+    if (!voiceObj) {
+      showAuditionError('未找到该音色，请刷新页面后重试');
+      return;
+    }
 
     let sampleText = '你好，我是微软神经网络语音。很高兴为你读出这句话！';
     if (voiceObj.locale.startsWith('en')) {
@@ -136,8 +164,28 @@ export default function App() {
       sampleText = '巴适得很！我是四川话音色，听起来安逸不？';
     }
 
+    const audio = auditionAudioRef.current;
+    const gen = ++auditionGenRef.current;
+    setAuditionError(null);
+    setAuditioningVoice(shortName);
+
+    // Unlock autoplay while we still have the user gesture (before network await).
+    if (audio) {
+      try {
+        audio.pause();
+        audio.src = SILENT_WAV;
+        audio.muted = true;
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+      } catch {
+        // Ignore unlock failures; real play() below will surface errors.
+        audio.muted = false;
+      }
+    }
+
     try {
-      setAuditioningVoice(shortName);
       const res = await synthesizeAudioApi(sampleText, shortName, {
         rate: 0,
         pitch: 0,
@@ -145,14 +193,41 @@ export default function App() {
         format: 'audio-24khz-96kbitrate-mono-mp3',
       });
 
-      if (auditionAudioRef.current) {
-        auditionAudioRef.current.src = res.blobUrl;
-        auditionAudioRef.current.play();
+      // A newer audition click superseded this one.
+      if (gen !== auditionGenRef.current) {
+        try {
+          URL.revokeObjectURL(res.blobUrl);
+        } catch {
+          /* ignore */
+        }
+        return;
       }
+
+      if (!auditionAudioRef.current) {
+        throw new Error('音频播放器未就绪');
+      }
+
+      revokeAuditionBlob();
+      auditionBlobUrlRef.current = res.blobUrl;
+      const el = auditionAudioRef.current;
+      el.pause();
+      el.src = res.blobUrl;
+      el.load();
+      await el.play();
+      // Keep auditioningVoice until onEnded / onError; do not clear in finally.
     } catch (e) {
+      if (gen !== auditionGenRef.current) return;
       console.error('Quick audition error:', e);
-    } finally {
       setAuditioningVoice(null);
+      const msg = e instanceof Error ? e.message : String(e);
+      const playBlocked =
+        /NotAllowedError|play\(\) failed|user didn't interact|autoplay/i.test(msg) ||
+        (e instanceof DOMException && e.name === 'NotAllowedError');
+      showAuditionError(
+        playBlocked
+          ? '浏览器拦截了自动播放，请再点一次「试听例句」'
+          : `试听失败: ${msg}`
+      );
     }
   };
 
@@ -163,7 +238,30 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      <audio ref={auditionAudioRef} onEnded={() => setAuditioningVoice(null)} />
+      <audio
+        ref={auditionAudioRef}
+        playsInline
+        preload="auto"
+        onEnded={() => setAuditioningVoice(null)}
+        onError={() => {
+          setAuditioningVoice(null);
+          showAuditionError('音频无法播放（格式或网络异常）');
+        }}
+      />
+
+      {auditionError && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 max-w-md w-[calc(100%-2rem)] px-4 py-3 bg-red-50 border border-red-200 text-red-800 text-sm rounded-xl shadow-lg flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span className="flex-1">{auditionError}</span>
+          <button
+            type="button"
+            onClick={() => setAuditionError(null)}
+            className="text-red-600 hover:text-red-900 text-xs font-medium shrink-0"
+          >
+            关闭
+          </button>
+        </div>
+      )}
 
       {/* Navigation Header */}
       <Navbar
@@ -257,10 +355,18 @@ export default function App() {
         onClose={() => setIsHistoryOpen(false)}
         history={history}
         onPlayItem={(item) => {
-          if (auditionAudioRef.current) {
-            auditionAudioRef.current.src = item.audioBlobUrl;
-            auditionAudioRef.current.play();
-          }
+          const el = auditionAudioRef.current;
+          if (!el) return;
+          setAuditionError(null);
+          el.pause();
+          el.src = item.audioBlobUrl;
+          el.load();
+          void el.play().catch((err) => {
+            console.error('History play error:', err);
+            showAuditionError(
+              err instanceof Error ? `播放失败: ${err.message}` : '播放失败'
+            );
+          });
         }}
         onLoadItemToStudio={(item) => {
           setSelectedVoiceShortName(item.voice);
